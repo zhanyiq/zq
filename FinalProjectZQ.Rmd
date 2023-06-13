@@ -1,0 +1,681 @@
+---
+title: "141A Final Project ZQ"
+author: "zhanyi qiu"
+date: "2023-06-12"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(htmlwidgets)
+library(tidyverse) 
+library(magrittr)   
+library(knitr) 
+library(dplyr)  
+library(cluster)
+```
+
+## Abstract 
+
+The ultimate goal of this project is to build a predictive model to predict an outcome with given test data. The data provided for this project is a subset of data collected by Steinmetz et al. (2019). The second goal of this project is to explore the provided data structure and gain insight from it. Also, with the gained insight, train a predictable model with the given data and draw an conclusion out of the data.
+
+*** 
+## Introduction
+
+The study concluded by Steinmetz analyzes how mice make decision with visual stimuli. 
+My focus here is to explore how neural activity involves making such decisions. My question is whether a higher neural activity has an impact on the mice to make a decision. The key variable for my project is spks, which represent the number of spikes of neurons in the brain area. I believe that higher spikes mean higher neural activity in the brain. I assume that more usage of the brain will impact decision-making. The higher spike may lead to more thinking and thus make a better decision. Or it may lead to the brain's exhaustion and lower performance.
+
+
+***  
+## Background 
+
+In this project, we analyze a subset of data collected by Steinmetz et al. (2019).In the study conducted by Steinmetz et al. (2019), experiments were performed on a total of 10 mice over 39 sessions. And we only use 18 sessions. Each session comprised several hundred trials, during which visual stimuli were randomly presented to the mouse on two screens positioned on both sides of it. The mice were required to make decisions based on the visual stimuli using a wheel controlled by their forepaws. A reward or penalty was subsequently administered based on the outcome of their decisions. 
+
+*** 
+
+## Descriptive analysis 
+
+### Data structure
+
+Three levels to explore data structure includes the full dataset, one session from the full dataset, and one trial from the selected session.
+
+### Dataset
+
+The dataset provided for this project consists of eighteen sessions involving four different mice. There were six variables utilized in this project include `mouse_name` (the name of the mouse for specific sessions), `date_exp` (the date of the experiment), `n_brain_area` (the involved brain area where neurons lives), `n_neurons` (the number of neurons), `n_trials` (the number of trials in each session), and `success_rate` (the ratio of successful trials to the total number of trials). In (**Table 1**), it shows a summary of the entire dataset.
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+session=list()
+setwd("/Users/nasqi/Downloads/sessions") 
+for(i in 1:18){
+  session[[i]]=readRDS(paste('session',i,'.rds',sep=''))
+}
+```
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+# Summarize the information across sessions:
+# Knowing what summary we want to report, we can create a tibble:
+n.session=length(session)
+
+# in library tidyverse
+
+meta <- tibble(
+  mouse_name = rep('name',n.session),
+  date_exp =rep('dt',n.session),
+  n_brain_area = rep(0,n.session),
+  n_neurons = rep(0,n.session),
+  n_trials = rep(0,n.session),
+  success_rate = rep(0,n.session)
+)
+
+
+for(i in 1:n.session){
+  tmp = session[[i]];
+  meta[i,1]=tmp$mouse_name;
+  meta[i,2]=tmp$date_exp;
+  meta[i,3]=length(unique(tmp$brain_area));
+  meta[i,4]=dim(tmp$spks[[1]])[1];
+  meta[i,5]=length(tmp$feedback_type);
+  meta[i,6]=mean(tmp$feedback_type+1)/2;
+}
+```
+
+```{r, echo=FALSE, warning=FALSE,  message=FALSE, tab.align = "center"}
+kable(meta, format = "html", table.attr = "class='table table-striped'",digits=2) 
+```
+
+<p style="text-align: center;">**Table 1**. Data structure across sessions.</p>
+
+### Session
+
+In this project, session 11 is selected to understand its structure. Session 11 includes 857 neurons, and they are located in CP, LSc, MOp, PT, root of the brain. To understand this neural activity data, investigate the correlation between the number of spikes across neurons in each brain area. The activity is defined as the average number of spikes across neurons in each brain area. The activities of these areas across 342 trials are visualized in (**Figure 1**).
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+i.s=11 # indicator for this session
+i.t=1 # indicator for this trial 
+
+spk.trial = session[[i.s]]$spks[[i.t]]
+area=session[[i.s]]$brain_area
+
+spk.count=apply(spk.trial,1,sum)
+
+spk.average.tapply=tapply(spk.count, area, mean)
+
+tmp <- data.frame(
+  area = area,
+  spikes = spk.count
+)
+# Calculate the average by group using dplyr
+spk.average.dplyr =tmp %>%
+  group_by(area) %>%
+  summarize(mean= mean(spikes))
+
+average_spike_area<-function(i.t,this_session){
+  spk.trial = this_session$spks[[i.t]]
+  area= this_session$brain_area
+  spk.count=apply(spk.trial,1,sum)
+  spk.average.tapply=tapply(spk.count, area, mean)
+  return(spk.average.tapply)
+  }
+
+average_spike_area(1,this_session = session[[i.s]])
+
+n.trial=length(session[[i.s]]$feedback_type)
+n.area=length(unique(session[[i.s]]$brain_area ))
+trial.summary =matrix(nrow=n.trial,ncol= n.area+1+2+1)
+for(i.t in 1:n.trial){
+  trial.summary[i.t,]=c(average_spike_area(i.t,this_session = session[[i.s]]),
+                          session[[i.s]]$feedback_type[i.t],
+                        session[[i.s]]$contrast_left[i.t],
+                        session[[i.s]]$contrast_right[i.s],
+                        i.t)
+}
+
+colnames(trial.summary)=c(names(average_spike_area(i.t,this_session = session[[i.s]])), 'feedback', 'left contr.','right contr.','id' )
+
+trial.summary <- as_tibble(trial.summary)
+```
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+area.col=rainbow(n=n.area,alpha=0.7)
+plot(x=1,y=0, col='white',xlim=c(0,n.trial),ylim=c(0.5,2.2), xlab="Trials",ylab="Average spike counts", main=paste("Spikes per area in Session", i.s))
+
+for(i in 1:n.area){
+  lines(y=trial.summary[[i]],x=trial.summary$id,col=area.col[i],lty=2,lwd=1)
+  lines(smooth.spline(trial.summary$id, trial.summary[[i]]),col=area.col[i],lwd=3)
+  }
+legend("topright", 
+  legend = colnames(trial.summary)[1:n.area], 
+  col = area.col, 
+  lty = 1, 
+  cex = 0.8
+)
+```
+<p style="text-align: center;">**Figure 1**. Average spike count across trials in session 11.</p>
+
+In **Figure 1**, most regression lines that represent different brain areas are going downward. Therefore, the plot suggests that as the number of trials increases, the average number of spike decrease. It may indicate that the neural activity of the mice is lower, as the mice are exhausted with too many trials. It also shows that stimuli are not enough to trigger higher neural activity as the brain is exhausted.
+
+### Trial
+
+At the trial level, the activities of all neurons is visualized in the selected session 11.
+
+Three trials were randomly selected to investigate change across trails in season 11. These three trails were displayed in **Figure 2**, **Figure 3**, and **Figure 4**. 
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+plot.trial<-function(i.t,area, area.col,this_session){
+    
+    spks=this_session$spks[[i.t]];
+    n.neuron=dim(spks)[1]
+    time.points=this_session$time[[i.t]]
+    
+    plot(0,0,xlim=c(min(time.points),max(time.points)),ylim=c(0,n.neuron+1),col='white', xlab='Time (s)',yaxt='n', ylab='Neuron', main=paste('Trial ',i.t, 'feedback', this_session$feedback_type[i.t] ),cex.lab=1.5)
+    for(i in 1:n.neuron){
+        i.a=which(area== this_session$brain_area[i]);
+        col.this=area.col[i.a]
+        
+        ids.spike=which(spks[i,]>0) # find out when there are spikes 
+        if( length(ids.spike)>0 ){
+            points(x=time.points[ids.spike],y=rep(i, length(ids.spike) ),pch='.',cex=2, col=col.this)
+        }
+      
+            
+    }
+    
+legend("topright", 
+  legend = area, 
+  col = area.col, 
+  pch = 16, 
+  cex = 0.8
+  )
+  }
+
+```
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+varname=names(trial.summary);
+area=varname[1:(length(varname)-4)]
+plot.trial(20,area, area.col,session[[i.s]])
+```
+<p style="text-align: center;">**Figure 2**. Trial 20 in session 11.</p>
+
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+varname=names(trial.summary);
+area=varname[1:(length(varname)-4)]
+plot.trial(150,area, area.col,session[[i.s]])
+```
+
+<p style="text-align: center;">**Figure 3**. Trial 60 in session 11.</p>
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+varname=names(trial.summary);
+area=varname[1:(length(varname)-4)]
+plot.trial(300,area, area.col,session[[i.s]])
+```
+<p style="text-align: center;">**Figure 4**. Trial 200 in session 11.</p>
+
+In **Figure 4**, the number of neurons in brain area CP was significantly lower than **Figure 2** and **Figure 3**. This suggests that some neural activity decreases as the number of trials increases. Or, it may indicate that neurons located in different brain areas will react to the same stimuli differently since some brain areas, such as brain area CP, show fewer reactions as trials increase. And it also shows that some neural activity last longer, while some are not. 
+
+In addition, across the three different trail plots, the distribution of the neurons was very similar. For example, the brain area CP is mostly distributed at the upper part of the plot. And these distributions tend to form a similar pattern across each trail. It may indicate that the neural activity across different brain areas was not correlated to each other.
+
+## Data integration
+
+### Clustering
+
+The heterogeneity across sessions exists with different groups of neurons recorded in different sessions. However, it seems reasonable to assume that underlying groups of neuron spikes were identical across sessions and mice, given that the neuron spikes are all from the same type of mice. Under this assumption, we can see the different neuron spikes in each session as a result of observing different samples from these groups.
+
+Therefore, the clustering method is viable for identifying clusters on neuron spikes across all sessions. Then, we can take the group average spikes count as the new feature of each trial.
+
+All 18 sessions were recorded from four mice. Therefore, the Cluster method can group the data target into four separate mice.
+
+In **Figure 5**, session data were subset to mice "Cori".
+In **Figure 6**, session data were subset to mice "Forssman".
+In **Figure 7**, session data were subset to mice "Hench".
+In **Figure 8**, session data were subset to mice "Lederberg"
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+spk.trial1 = session[[1]]$spks[[1]]
+spk.count1 = apply(spk.trial1,1,sum)
+
+spk.trial2 = session[[2]]$spks[[1]]
+spk.count2 = apply(spk.trial2,1,sum)
+
+spk.trial3 = session[[3]]$spks[[1]]
+spk.count3 = apply(spk.trial3,1,sum)
+
+session1=cbind(session[[1]]$brain_area, spk.count1)
+
+session2=cbind(session[[2]]$brain_area, spk.count2)
+
+session3=cbind(session[[3]]$brain_area, spk.count3)
+
+df = rbind(session1, session2, session3)
+colnames(df) = c("brain_area","spike")
+df = as.data.frame(df)
+df_clean <- df[rowSums(df == 0) == 0, ]
+```
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+kmeans = kmeans(x = df_clean$spike, centers = 4)
+y_kmeans = kmeans$cluster
+
+
+clusplot(df_clean,
+         y_kmeans,
+         lines = 0,
+         shade = TRUE,
+         color = TRUE,
+         labels = 2,
+         plotchar = FALSE,
+         span = TRUE,
+         main = paste('Clusters of Cori'),
+         xlab = 'Spike count',
+         ylab = 'Brain area')
+
+
+```
+<p style="text-align: center;">**Figure 5**. Cluster of Cori.</p>
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+spk.trial4 = session[[4]]$spks[[1]]
+spk.count4 = apply(spk.trial4,1,sum)
+
+spk.trial5 = session[[5]]$spks[[1]]
+spk.count5 = apply(spk.trial5,1,sum)
+
+spk.trial6 = session[[6]]$spks[[1]]
+spk.count6 = apply(spk.trial6,1,sum)
+
+spk.trial7 = session[[7]]$spks[[1]]
+spk.count7 = apply(spk.trial7,1,sum)
+
+session4=cbind(session[[4]]$brain_area, spk.count4)
+
+session5=cbind(session[[5]]$brain_area, spk.count5)
+
+session6=cbind(session[[6]]$brain_area, spk.count6)
+
+session7=cbind(session[[7]]$brain_area, spk.count7)
+
+df = rbind(session4, session5, session6, session7)
+colnames(df) = c("brain_area","spike")
+df = as.data.frame(df)
+df_clean <- df[rowSums(df == 0) == 0, ]
+```
+
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+kmeans = kmeans(x = df_clean$spike, centers = 4)
+y_kmeans = kmeans$cluster
+
+
+clusplot(df_clean,
+         y_kmeans,
+         lines = 0,
+         shade = TRUE,
+         color = TRUE,
+         labels = 2,
+         plotchar = FALSE,
+         span = TRUE,
+         main = paste('Clusters of Forssmann'),
+         xlab = 'Spike count',
+         ylab = 'Brain area')
+```
+<p style="text-align: center;">**Figure 6**. Cluster of Forssmann.</p>
+
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+spk.trial8 = session[[8]]$spks[[1]]
+spk.count8 = apply(spk.trial8,1,sum)
+
+spk.trial9 = session[[9]]$spks[[1]]
+spk.count9 = apply(spk.trial9,1,sum)
+
+spk.trial10 = session[[10]]$spks[[1]]
+spk.count10 = apply(spk.trial10,1,sum)
+
+spk.trial11 = session[[11]]$spks[[1]]
+spk.count11 = apply(spk.trial11,1,sum)
+
+session8=cbind(session[[8]]$brain_area, spk.count8)
+
+session9=cbind(session[[9]]$brain_area, spk.count9)
+
+session10=cbind(session[[10]]$brain_area, spk.count10)
+
+session11=cbind(session[[11]]$brain_area, spk.count11)
+
+df = rbind(session8, session9, session10, session11)
+colnames(df) = c("brain_area","spike")
+df = as.data.frame(df)
+df_clean <- df[rowSums(df == 0) == 0, ]
+```
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+kmeans = kmeans(x = df_clean$spike, centers = 4)
+y_kmeans = kmeans$cluster
+
+
+clusplot(df_clean,
+         y_kmeans,
+         lines = 0,
+         shade = TRUE,
+         color = TRUE,
+         labels = 2,
+         plotchar = FALSE,
+         span = TRUE,
+         main = paste('Clusters of Hench'),
+         xlab = 'Spike count',
+         ylab = 'Brain area')
+```
+<p style="text-align: center;">**Figure 7**. Cluster of Hench.</p>
+
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+spk.trial12 = session[[12]]$spks[[1]]
+spk.count12 = apply(spk.trial12,1,sum)
+
+spk.trial13 = session[[13]]$spks[[1]]
+spk.count13 = apply(spk.trial13,1,sum)
+
+spk.trial14 = session[[14]]$spks[[1]]
+spk.count14 = apply(spk.trial14,1,sum)
+
+spk.trial15 = session[[15]]$spks[[1]]
+spk.count15 = apply(spk.trial15,1,sum)
+
+spk.trial16 = session[[16]]$spks[[1]]
+spk.count16 = apply(spk.trial16,1,sum)
+
+spk.trial17 = session[[17]]$spks[[1]]
+spk.count17 = apply(spk.trial17,1,sum)
+
+spk.trial18 = session[[18]]$spks[[1]]
+spk.count18 = apply(spk.trial18,1,sum)
+
+session12=cbind(session[[12]]$brain_area, spk.count12)
+
+session13=cbind(session[[13]]$brain_area, spk.count13)
+
+session14=cbind(session[[14]]$brain_area, spk.count14)
+
+session15=cbind(session[[15]]$brain_area, spk.count15)
+
+session16=cbind(session[[16]]$brain_area, spk.count16)
+
+session17=cbind(session[[17]]$brain_area, spk.count17)
+
+session18=cbind(session[[18]]$brain_area, spk.count18)
+
+
+df = rbind(session12, session13, session14, session15, session16, session17, session18)
+colnames(df) = c("brain_area","spike")
+df = as.data.frame(df)
+df_clean <- df[rowSums(df == 0) == 0, ]
+```
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+kmeans = kmeans(x = df_clean$spike, centers = 7)
+y_kmeans = kmeans$cluster
+
+
+clusplot(df_clean,
+         y_kmeans,
+         lines = 0,
+         shade = TRUE,
+         color = TRUE,
+         labels = 2,
+         plotchar = FALSE,
+         span = TRUE,
+         main = paste('Clusters of Lederberg'),
+         xlab = 'Spike count',
+         ylab = 'Brain area')
+```
+<p style="text-align: center;">**Figure 8**. Cluster of Lederberg.</p>
+
+The distribution of the spike count was similar across four different mice. This may suggest that these four individual mice were the same type. As a result, they tend to have a similar brain and thus show similar neural activity. 
+
+The heterogeneity exists and is displayed in the various cluster. The grouping clusters from these four mice were structured similarly but distributed differently. Given that these four samples were tested in multiple brain areas with some identical areas. This may indicate that the neural activity in the brain varies as the brain areas react to different stimuli.
+
+## Predictive modeling
+
+Train a prediction model to predict the outcome of two test sets of 100 trials randomly selected from Session 1 and Session 18
+
+### Logistic Regression
+
+Logistic regression is a statistical model that analyzes the relationship between a binary outcome variable and one or more predictor variables. 
+
+In **Figure 9**, visualize a predictive model for mice "Cori". This model is trained using sessions 2 to 3, which use the same sample, "Cori".
+
+In **Figure10**, visualize a predictive model for mice "Lederberg". This model is trained using sessions 12 to 17, which use the same sample, "Lederberg".
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+# Logistic Regression
+
+# Importing the dataset
+session2 <- cbind(spk.count2, session[[2]]$feedback_type)
+session3 <- cbind(spk.count3, session[[3]]$feedback_type)
+
+df <- rbind(session2, session3)
+df <- as.data.frame(df)
+colnames(df) <- c("spike", "outcome")
+df$outcome <- ifelse(df$outcome == -1, 0, df$outcome)
+training <- df
+
+# Fitting Logistic Regression to the Training set
+classifier <- glm(formula = outcome ~ spike,
+                  family = binomial,
+                  data = training)
+```
+
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+# Visualizing the Training set results
+set <- training
+X1 <- seq(min(set$spike) - 1, max(set$spike) + 1, by = 0.01)
+X2 <- seq(min(set$outcome) - 1, max(set$outcome) + 1, by = 0.01)
+grid_set <- expand.grid(spike = X1, outcome = X2)
+prob_set <- predict(classifier, type = 'response', newdata = grid_set)
+y_grid <- ifelse(prob_set > 0.5, 1, 0)
+plot(outcome ~ spike, data = set,
+     main = 'Logistic Regression (Training set for Cori)',
+     xlab = 'Spike', ylab = 'Outcome',
+     xlim = range(X1), ylim = range(X2))
+contour(X1, X2, matrix(as.numeric(y_grid), length(X1), length(X2)), add = TRUE)
+```
+<p style="text-align: center;">**Figure 9**. Training Model for Cori Prediction.</p>
+
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+# Logistic Regression
+
+# Importing the dataset
+session12 <- cbind(spk.count12, session[[12]]$feedback_type)
+session13 <- cbind(spk.count13, session[[13]]$feedback_type)
+session14 <- cbind(spk.count14, session[[14]]$feedback_type)
+session15 <- cbind(spk.count15, session[[15]]$feedback_type)
+session16 <- cbind(spk.count16, session[[16]]$feedback_type)
+session17 <- cbind(spk.count17, session[[17]]$feedback_type)
+
+df <- rbind(session12, session13, session14, session15, session16, session17)
+df <- as.data.frame(df)
+colnames(df) <- c("spike", "outcome")
+df$outcome <- ifelse(df$outcome == -1, 0, df$outcome)
+training <- df
+
+# Fitting Logistic Regression to the Training set
+classifier <- glm(formula = outcome ~ spike,
+                  family = binomial,
+                  data = training)
+```
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+# Visualizing the Training set results
+set <- training
+X1 <- seq(min(set$spike) - 1, max(set$spike) + 1, by = 0.01)
+X2 <- seq(min(set$outcome) - 1, max(set$outcome) + 1, by = 0.01)
+grid_set <- expand.grid(spike = X1, outcome = X2)
+prob_set <- predict(classifier, type = 'response', newdata = grid_set)
+y_grid <- ifelse(prob_set > 0.5, 1, 0)
+plot(outcome ~ spike, data = set,
+     main = 'Logistic Regression (Training set for Lederberg)',
+     xlab = 'Spike', ylab = 'Outcome',
+     xlim = range(X1), ylim = range(X2))
+contour(X1, X2, matrix(as.numeric(y_grid), length(X1), length(X2)), add = TRUE)
+
+```
+<p style="text-align: center;">**Figure 10**. Training Model for Lederberg Prediction.</p>
+
+
+## Prediction performance on the test sets
+
+Two test sets of 100 trials randomly selected from Session 1 and Session 18
+Assuming test1 is randomly selected from Session1, and test2 is randomly selected from Session18.
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+
+test=list()
+setwd("/Users/nasqi/Downloads/test") 
+for(i in 1:2){
+  test[[i]]=readRDS(paste('test',i,'.rds',sep=''))
+}
+
+```
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+# Logistic Regression
+
+# Importing the dataset
+spk.trialT1 = test[[1]]$spks[[1]]
+spk.countT1 = apply(spk.trialT1,1,sum)
+
+test1 <- cbind(spk.countT1, test[[1]]$feedback_type)
+
+df <- rbind(test1)
+df <- as.data.frame(df)
+colnames(df) <- c("spike", "outcome")
+df$outcome <- ifelse(df$outcome == -1, 0, df$outcome)
+test1 <- df
+
+
+# Fitting Logistic Regression to the Training set
+classifier <- glm(formula = outcome ~ spike,
+                  family = binomial,
+                  data = training)
+```
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+# Visualizing the Test set results
+set <- test1
+X1 <- seq(min(set$spike) - 1, max(set$spike) + 1, by = 0.01)
+X2 <- seq(min(set$outcome) - 1, max(set$outcome) + 1, by = 0.01)
+grid_set <- expand.grid(spike = X1, outcome = X2)
+prob_set <- predict(classifier, type = 'response', newdata = grid_set)
+y_grid <- ifelse(prob_set > 0.5, 1, 0)
+plot(outcome ~ spike, data = set,
+     main = 'Logistic Regression (Test set for Cori)',
+     xlab = 'Spike', ylab = 'Outcome',
+     xlim = range(X1), ylim = range(X2))
+contour(X1, X2, matrix(as.numeric(y_grid), length(X1), length(X2)), add = TRUE)
+
+```
+<p style="text-align: center;">**Figure 11**. Testing Model for Cori Prediction.</p>
+
+
+```{r, echo=FALSE, warning=FALSE, results='hide',include = FALSE, message=FALSE}
+# Logistic Regression
+
+# Importing the dataset
+spk.trialT2 = test[[2]]$spks[[1]]
+spk.countT2 = apply(spk.trialT2,1,sum)
+
+test2 <- cbind(spk.countT2, test[[2]]$feedback_type)
+
+df <- rbind(test2)
+df <- as.data.frame(df)
+colnames(df) <- c("spike", "outcome")
+df$outcome <- ifelse(df$outcome == -1, 0, df$outcome)
+test2 <- df
+
+
+# Fitting Logistic Regression to the Training set
+classifier <- glm(formula = outcome ~ spike,
+                  family = binomial,
+                  data = training)
+```
+
+```{r, echo=FALSE, result = 'hide', fig.height = 4, fig.width = 5, fig.align = "center"}
+# Visualizing the Test set results
+set <- test2
+X1 <- seq(min(set$spike) - 1, max(set$spike) + 1, by = 0.01)
+X2 <- seq(min(set$outcome) - 1, max(set$outcome) + 1, by = 0.01)
+grid_set <- expand.grid(spike = X1, outcome = X2)
+prob_set <- predict(classifier, type = 'response', newdata = grid_set)
+y_grid <- ifelse(prob_set > 0.5, 1, 0)
+plot(outcome ~ spike, data = set,
+     main = 'Logistic Regression (Test set for Lederberg)',
+     xlab = 'Spike', ylab = 'Outcome',
+     xlim = range(X1), ylim = range(X2))
+contour(X1, X2, matrix(as.numeric(y_grid), length(X1), length(X2)), add = TRUE)
+
+```
+
+<p style="text-align: center;">**Figure 12**. Testing Model for Lederberg Prediction.</p>
+
+
+### Confusion Matrix
+
+```{r, echo=FALSE}
+test1$predicted <- ifelse(predict(classifier, newdata = test1, type = "response") > 0.5, 1, 0)
+
+# Creating the confusion matrix
+conf_matrix <- table(test1$outcome, test1$predicted)
+
+# Displaying the confusion matrix
+conf_matrix
+```
+
+
+The confusion matrix of test 1 indicates that the probability of a successful outcome is 52.9%
+
+```{r, echo=FALSE}
+
+test2$predicted <- ifelse(predict(classifier, newdata = test2, type = "response") > 0.5, 1, 0)
+
+# Creating the confusion matrix
+conf_matrix <- table(test2$outcome, test2$predicted)
+
+# Displaying the confusion matrix
+conf_matrix
+
+```
+
+The confusion matrix of test 2 indicates that the probability of a successful outcome is 79.7%
+
+## Discussion
+
+The study of this project analyzes whether a higher neural activity correlates the better performance. The data of this project is a subset of the neural activity data of four mice. These mice were the same type of mice. The distortion pattern of the neuron spikes suggests that the neuron activities for these four mice were similar but varied slightly. It hints that these four mice were the same type and thus had similar brain activity.  
+
+One finding of the data structure is that as the number of trials increases, the neuron spikes decrease. This data suggests that the performance of the brain is lower and shows less activity over time. It seems that the mice's brains were overused after hundreds of trials. One possible assumption is that the brain is exhausted while too active. 
+
+In addition, with the training model, it is possible to predict how likely the brain will better a successful decision. However, after exploring different models and plots, the performance of the neural activity may not necessarily impact how it will make decisions. The brain is running so efficiently that it can make decisions while exhausted.
+
+## Acknowledgement
+
+## Reference
+Steinmetz, N.A., Zatka-Haas, P., Carandini, M. et al. Distributed coding of choice, action and engagement across the mouse brain. Nature 576, 266–273 (2019). https://doi.org/10.1038/s41586-019-1787-x
+
+
+*** 
+## Session info {-}
+
+
+```{r}
+sessionInfo()
+```
+*** 
+
+## Appendix {-}
+\begin{center} Appendix: R Script \end{center}
+
+```{r, ref.label=knitr::all_labels(),echo=TRUE,eval=FALSE}
+```
+
